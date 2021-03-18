@@ -9,17 +9,92 @@ from cryptography.hazmat.primitives.ciphers import aead
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import padding
 import paho.mqtt.client as mqtt
 import os
 import base64
+import time
+import hmac
 
-# Solo si queremos Padding
-from cryptography.hazmat.primitives import padding
+# Ejemplo de uso de hmac
+#h = hmac.new(key, message, hashlib.sha256)
+#print(h.hexdigest())
 
 # Generate DH parameters
 parameters = dh.generate_parameters(generator=2, key_size=512, backend=default_backend())
 params_pem = parameters.parameter_bytes(Encoding.PEM, ParameterFormat.PKCS3)
+print(params_pem.decode())
+
+# Generate private keys.
+a_private_key = parameters.generate_private_key()
+a_public_key = a_private_key.public_key()
+
+print("Esta es mi clave privada: %d" %a_private_key.private_numbers().x)
+print("Esta es mi clave pública: %d" %a_public_key.public_numbers().y)
+
+name = "None"
+
+# The callback for when the client receives a CONNACK response from the server.
+def on_connect(client, userdata, flags, rc):
+    if (rc == 0):
+        print("Connected OK")
+        client.subscribe("conexion")
+    else:
+        print("Connected with result code " + str(rc))
+
+    # Subscribing in on_connect() means that if we lose the connection and
+    # reconnect then subscriptions will be renewed.
+    # client.subscribe("SPEA")
+
+# The callback for when a PUBLISH message is received from the server.
+def on_message(client, userdata, msg):
+    global name
+    print(msg.topic + ": " + str(msg.payload.decode()))
+    if (msg.topic == "conexion"):
+        name = str(msg.payload.decode()).split(":")[0]
+        mode = str(msg.payload.decode()).split(":")[1]
+        print("Name: " + name)
+        print("Mode: " + mode)
+        client.publish(name + "/to", "param:" + str(params_pem, 'ascii'))
+        client.publish(name + "/to", "public:" + str(a_public_key.public_numbers().y))
+        client.subscribe(name + "/from")
+    if (msg.topic == (name + "/from")):
+        if (str(msg.payload.decode()).split(":")[0] == "public"):
+            b_public_key_number = int(str(msg.payload.decode()).split(":")[1])
+            print("Clave pública de " + name + ": " + str(b_public_key_number))
+            peer_public_numbers = dh.DHPublicNumbers(b_public_key_number, parameters.parameter_numbers())
+            b_public_key = peer_public_numbers.public_key(default_backend())
+            a_shared_key = a_private_key.exchange(b_public_key)
+            print("a_shared_key: " + str(a_shared_key.hex()))
+
+client = mqtt.Client("Plataforma")
+client.on_connect = on_connect
+client.on_message = on_message
+
+#client.username_pw_set("try", "try")
+
+# client.connect("public.cloud.shiftr.io", 1883, 60)
+client.connect("192.168.0.17", 1883)
+
+# Si quiero que esté escuchando para siempre:
+# client.loop_forever()
+# http://www.steves-internet-guide.com/loop-python-mqtt-client/
+
+# Inicia una nueva hebra
+client.loop_start()
+time.sleep(4)
+
+while 1:
+    # Publish a message every second
+    #client.publish("SPEA", "Hello World", 1)
+    time.sleep(1)
+
+'''
+# Generate DH parameters
+parameters = dh.generate_parameters(generator=2, key_size=512, backend=default_backend())
+params_pem = parameters.parameter_bytes(Encoding.PEM, ParameterFormat.PKCS3)
 print(params_pem)
+'''
 
 #b_params_from_number = DHParameterNumbers(10, 3).parameters(backend=default_backend())
 #b_params_from_pem = load_pem_parameters(b_pem, backend=default_backend())
@@ -54,7 +129,7 @@ print("Esta es tu clave pública: %d"%b_public_key.public_numbers().y)
 a_shared_key = a_private_key.exchange(b_public_key)
 #b_shared_key = b_private_key.exchange(a_public_key)
 
-print("a_shared_key: " + str(a_shared_key))
+print("a_shared_key: " + str(a_shared_key.hex()))
 #print("b_shared_key: " + str(b_shared_key))
 
 derived_key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b'handshake data').derive(a_shared_key)
@@ -151,41 +226,6 @@ print(descifrado.decode())
 # 5. IoT: Show Code
 # 6. IoT - S : publish "auth" E_K_S(Code)
 # 7. S : Verify Code received = Code shown
-
-import time
-
-# The callback for when the client receives a CONNACK response from the server.
-def on_connect(client, userdata, flags, rc):
-    print("Connected with result code " + str(rc))
-
-    # Subscribing in on_connect() means that if we lose the connection and
-    # reconnect then subscriptions will be renewed.
-    # client.subscribe("SPEA")
-
-# The callback for when a PUBLISH message is received from the server.
-def on_message(client, userdata, msg):
-    print(msg.topic + " " + str(msg.payload))
-
-client = mqtt.Client()
-client.on_connect = on_connect
-client.on_message = on_message
-
-client.username_pw_set("try", "try")
-
-# client.connect("public.cloud.shiftr.io", 1883, 60)
-client.connect("192.168.0.17", 1883, 60)
-
-# Si quiero que esté escuchando para siempre:
-# client.loop_forever()
-# http://www.steves-internet-guide.com/loop-python-mqtt-client/
-
-# Inicia una nueva hebra
-client.loop_start()
-
-while 1:
-    # Publish a message every second
-    client.publish("SPEA", "Hello World", 1)
-    time.sleep(1)
 
 # También se puede conectar y enviar en una linea https://www.eclipse.org/paho/clients/python/docs/#single
 
