@@ -1,1 +1,4 @@
 cryptography
+paho-mqtt
+flask
+websocket_server
