@@ -148,6 +148,20 @@ def on_message(client, userdata, msg):
 
                 # If we don't know its public key, we save it
                 except IndexError:
+                    # If the device has 'output' or nothing
+                    if (int(mode) > 0):
+                        # HMAC key will be introduced on web page
+                        data = { "type": "hmac", "name": name, "mode": mode }
+
+                    # If the device has just 'input'
+                    else:
+                        # HMAC key will be introduced on device
+                        hmac_key = str(os.urandom(2).hex())
+                        data = { "type": "hmac", "name": name, "mode": mode, "hmac_key": hmac_key }
+
+                    # Show the correspondent information on web page
+                    server.send_message_to_all(json.dumps(data))
+
                     print("New public key from device.")
 
                 # DH key exchange
@@ -179,20 +193,6 @@ def on_message(client, userdata, msg):
                 key_aead = base64.urlsafe_b64encode(derived_key_aead)
                 a_key = aead.AESGCM(key_aead)
                 aead_keys.insert(names.index(name), a_key)
-
-                # If the device has 'output' or nothing
-                if (int(mode) > 0):
-                    # HMAC key will be introduced on web page
-                    data = { "type": "hmac", "name": name, "mode": mode }
-
-                # If the device has just 'input'
-                else:
-                    # HMAC key will be introduced on device
-                    hmac_key = str(os.urandom(2).hex())
-                    data = { "type": "hmac", "name": name, "mode": mode, "hmac_key": hmac_key }
-
-                # Show the correspondent information on web page
-                server.send_message_to_all(json.dumps(data))
 
             # Receive HMAC from device
             elif (str(msg.payload.decode()).split(":")[0] == "hmac"):

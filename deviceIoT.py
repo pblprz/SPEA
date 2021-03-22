@@ -22,6 +22,8 @@ import threading
 mode = 0            # 0 = E, 1 = S, 2 = E/S, 3 = None
 name = "Pablo"      # Device name
 
+hmac_key = None
+
 # The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, flags, rc):
     if (rc == 0):
@@ -86,6 +88,7 @@ def on_message(client, userdata, msg):
 
             # Calculate HMAC
             def hebra():
+                global hmac_key
                 # If device has just 'input', write HMAC key here
                 if (mode == 0):
                     hmac_key = str(input("Introduce la clave que aparece en la plataforma: "))
@@ -103,8 +106,9 @@ def on_message(client, userdata, msg):
                 # Send to platform HMAC
                 client.publish(name + "/from", "hmac:" + str(h.hexdigest()))
 
-            # New thread because 'input' is blocking
-            threading.Thread(target = hebra).start()
+            if (hmac_key is None):
+                # New thread because 'input' is blocking
+                threading.Thread(target = hebra).start()
 
             # Calculate FERNET key using HASH
             derived_key_fernet = HKDF(algorithm = hashes.SHA256(), length = 32, salt = None, info = b'handshake data').derive(a_shared_key)
@@ -141,7 +145,7 @@ client.loop_start()
 while 1:
 
     # Send a message periodically
-    time.sleep(20)
+    time.sleep(30)
 
     # Fernet or AEAD
     if (symmetric_mode == 0):
