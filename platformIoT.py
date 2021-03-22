@@ -1,9 +1,12 @@
+import json
+import time
+from websocket_server import WebsocketServer
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.asymmetric import dh
+from cryptography.hazmat.primitives.asymmetric import dh, ec
 from cryptography.hazmat.primitives.serialization import ParameterFormat
-from cryptography.hazmat.primitives.serialization import Encoding
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from cryptography.hazmat.primitives.asymmetric.dh import DHParameterNumbers
-from cryptography.hazmat.primitives.serialization import load_pem_parameters
+from cryptography.hazmat.primitives.serialization import load_pem_parameters, load_pem_public_key
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers import aead
 from cryptography.fernet import Fernet
@@ -15,218 +18,262 @@ import os
 import base64
 import time
 import hmac
+import hashlib
+import threading
+import numpy
 
-# Ejemplo de uso de hmac
-#h = hmac.new(key, message, hashlib.sha256)
-#print(h.hexdigest())
+# Some variables
+names = []
+modes = []
+asymmetric_modes = []
+symmetric_modes = []
+public_keys = []
+shared_keys = []
+fernet_keys = []
+aead_keys = []
+hmacs = []
+
+# The callback when there is a new socket client
+def new_client(client, server):
+    print("New client!")
+
+# The callback when there is a new socket message
+def new_message(client2, server, message):
+    # Unsubscribe message
+    if (str(message).split(": ")[0] == "unsubscribe"):
+        client.unsubscribe(str(message).split(": ")[1] + "/from")
+        print("Unsubscribe: " + str(message).split(": ")[1])
+
+    # HMAC message
+    else:
+        hmac_key = str(message)
+        h2 = hmac.new(bytes(hmac_key, 'ascii'), bytes(str(b_public_key.public_numbers().y), 'ascii'), hashlib.sha256)
+        # Compare HMAC
+        if (hmac.compare_digest(h, h2.hexdigest())):
+            hmacs.append(True)
+            data = { "type": "datos_dispositivos", "name": name, "mode": mode } # model data
+            server.send_message_to_all(json.dumps(data))
+            print("HMAC de " + name + " coincide.")
+        else:
+            hmacs.append(False)
+            print("HMAC de " + name + " no coincide.")
 
 # Generate DH parameters
-parameters = dh.generate_parameters(generator=2, key_size=512, backend=default_backend())
+parameters = dh.generate_parameters(generator = 2, key_size = 512, backend = default_backend())
 params_pem = parameters.parameter_bytes(Encoding.PEM, ParameterFormat.PKCS3)
-print(params_pem.decode())
 
-# Generate private keys.
+# Generate private and public key
 a_private_key = parameters.generate_private_key()
 a_public_key = a_private_key.public_key()
 
-print("Esta es mi clave privada: %d" %a_private_key.private_numbers().x)
-print("Esta es mi clave pública: %d" %a_public_key.public_numbers().y)
+# Generate private and public key ECDH
+a_private_key_ecdh = ec.generate_private_key(ec.SECP384R1())
+a_public_key_ecdh = a_private_key_ecdh.public_key()
 
-name = "None"
-
-# The callback for when the client receives a CONNACK response from the server.
+# The callback for when the client receives a CONNACK response from the server
 def on_connect(client, userdata, flags, rc):
     if (rc == 0):
         print("Connected OK")
-        client.subscribe("conexion")
+        client.subscribe("connection")
     else:
         print("Connected with result code " + str(rc))
 
-    # Subscribing in on_connect() means that if we lose the connection and
-    # reconnect then subscriptions will be renewed.
-    # client.subscribe("SPEA")
-
-# The callback for when a PUBLISH message is received from the server.
+# The callback for when a PUBLISH message is received from the server
 def on_message(client, userdata, msg):
     global name
-    print(msg.topic + ": " + str(msg.payload.decode()))
-    if (msg.topic == "conexion"):
+    global mode
+    global asymmetric_mode
+    global symmetric_mode
+    global b_public_key
+    global b_public_key_ecdh
+    global a_shared_key
+    global f_key
+    global a_key
+    global h
+    global hmac_key
+    print(msg.topic + " -> " + str(msg.payload.decode()))
+
+    # Connection message
+    if (msg.topic == "connection"):
+
+        # Initialize some variables
         name = str(msg.payload.decode()).split(":")[0]
         mode = str(msg.payload.decode()).split(":")[1]
-        print("Name: " + name)
-        print("Mode: " + mode)
-        client.publish(name + "/to", "param:" + str(params_pem, 'ascii'))
-        client.publish(name + "/to", "public:" + str(a_public_key.public_numbers().y))
+        asymmetric_mode = int(str(msg.payload.decode()).split(":")[2])
+        symmetric_mode = int(str(msg.payload.decode()).split(":")[3])
+
+        # Save the variables for each device
+        names.append(name)
+        modes.append(mode)
+        asymmetric_modes.append(asymmetric_mode)
+        symmetric_modes.append(symmetric_mode)
+
+        # Key exchange
+        if (asymmetric_mode == 0):
+            client.publish(name + "/to", "param:" + str(params_pem, 'ascii'))
+            client.publish(name + "/to", "public:" + str(a_public_key.public_numbers().y))
+        else:
+            client.publish(name + "/to", "public:" + a_public_key_ecdh.public_bytes(encoding = Encoding.PEM, format = PublicFormat.SubjectPublicKeyInfo).decode())
         client.subscribe(name + "/from")
-    if (msg.topic == (name + "/from")):
-        if (str(msg.payload.decode()).split(":")[0] == "public"):
-            b_public_key_number = int(str(msg.payload.decode()).split(":")[1])
-            print("Clave pública de " + name + ": " + str(b_public_key_number))
-            peer_public_numbers = dh.DHPublicNumbers(b_public_key_number, parameters.parameter_numbers())
-            b_public_key = peer_public_numbers.public_key(default_backend())
-            a_shared_key = a_private_key.exchange(b_public_key)
-            print("a_shared_key: " + str(a_shared_key.hex()))
 
+        # Show the information on web page
+        data = { "type": "conexion_dispositivo", "payload": msg.payload.decode() }
+        server.send_message_to_all(json.dumps(data))
+
+    # Message from a device that has already connected
+    else:
+
+        # Topic = <Device name>/from
+        name = str(msg.topic).split("/")[0]
+        if (msg.topic == (name + "/from")):
+
+            # Receive device public key
+            if (str(msg.payload.decode()).split(":")[0] == "public"):
+
+                # If we know its old public key, we upload it
+                try:
+                    public_keys.pop(names.index(name))
+                    shared_keys.pop(names.index(name))
+                    fernet_keys.pop(names.index(name))
+                    aead_keys.pop(names.index(name))
+                    print("Public key uploaded")
+
+                # If we don't know its public key, we save it
+                except IndexError:
+                    print("New public key")
+
+                # DH key exchange
+                if (asymmetric_modes[names.index(name)] == 0):
+                    b_public_key_number = int(str(msg.payload.decode()).split(":")[1])
+                    peer_public_numbers = dh.DHPublicNumbers(b_public_key_number, parameters.parameter_numbers())
+                    b_public_key = peer_public_numbers.public_key(default_backend())
+                    public_keys.insert(names.index(name), b_public_key)
+                    a_shared_key = a_private_key.exchange(b_public_key)
+
+                # ECDH key exchange
+                else:
+                    b_public_key_number = str(msg.payload.decode()).split(":")[1]
+                    b_public_key_ecdh = load_pem_public_key(b_public_key_number.encode())
+                    a_shared_key = a_private_key_ecdh.exchange(ec.ECDH(), b_public_key_ecdh)
+
+                # Save the shared key
+                shared_keys.insert(names.index(name), a_shared_key)
+
+                # We fix the shared key for Fernet using HASH and save it
+                derived_key_fernet = HKDF(algorithm = hashes.SHA256(), length = 32, salt = None, info = b'handshake data').derive(a_shared_key)
+                key_fernet = base64.urlsafe_b64encode(derived_key_fernet)
+                f_key = Fernet(key_fernet)
+                fernet_keys.insert(names.index(name), f_key)
+
+                # We fix the shared key for AEAD using HASH and save it
+                derived_key_aead = HKDF(algorithm = hashes.SHA256(), length = 24, salt = None, info = b'handshake data').derive(a_shared_key)
+                key_aead = base64.urlsafe_b64encode(derived_key_aead)
+                a_key = aead.AESGCM(key_aead)
+                aead_keys.insert(names.index(name), a_key)
+
+                # If the device has 'output' or nothing
+                if (int(mode) > 0):
+                    # HMAC key will be introduced on web page
+                    data = { "type": "hmac", "name": name, "mode": mode }
+
+                # If the device has just 'input'
+                else:
+                    # HMAC key will be introduced on device
+                    hmac_key = str(os.urandom(2).hex())
+                    data = { "type": "hmac", "name": name, "mode": mode, "hmac_key": hmac_key }
+
+                # Show the correspondent information on web page
+                server.send_message_to_all(json.dumps(data))
+
+            # Receive HMAC from device
+            elif (str(msg.payload.decode()).split(":")[0] == "hmac"):
+
+                # Save received HMAC
+                h = str(msg.payload.decode()).split(":")[1]
+
+                # If the device has just 'input'
+                if (int(mode) == 0):
+
+                    # DH or ECDH
+                    if (asymmetric_mode == 0):
+                        h2 = hmac.new(bytes(hmac_key, 'ascii'), bytes(str(b_public_key.public_numbers().y), 'ascii'), hashlib.sha256)
+                    else:
+                        h2 = hmac.new(bytes(hmac_key, 'ascii'), b_public_key_ecdh.public_bytes(encoding = Encoding.PEM, format = PublicFormat.SubjectPublicKeyInfo), hashlib.sha256)
+
+                    # Compare HMAC
+                    if (hmac.compare_digest(h, h2.hexdigest())):
+                        hmacs.append(True)
+                        data = { "type": "datos_dispositivos", "name": name, "mode": mode }
+                        # Device will be added on web page if HMAC is correct
+                        server.send_message_to_all(json.dumps(data))
+                        print("HMAC de " + name + " coincide.")
+                    else:
+                        hmacs.append(False)
+                        # Unsubscribe
+                        client.unsubscribe(name + "/from")
+                        print("HMAC de " + name + " no coincide.")
+
+            # Receive message from device
+            elif (str(msg.payload.decode()).split(": ")[0] == "message"):
+                message = str(msg.payload.decode()).split(": ")[1]
+
+                # Fernet or AEAD
+                if (symmetric_modes[names.index(name)] == 0):
+                    message = fernet_keys[names.index(name)].decrypt(message.encode())
+                else:
+                    message = aead_keys[names.index(name)].decrypt(b"12345678", message.encode('latin-1'), None)
+                print(message.decode())
+
+                # Show the correspondent information on web page
+                data = { "type": "message", "name": name, "payload": message.decode() } # model data
+                server.send_message_to_all(json.dumps(data))
+
+
+# Create MQTT client
 client = mqtt.Client("Plataforma")
+# Function for new connection
 client.on_connect = on_connect
+# Function for new message
 client.on_message = on_message
-
-#client.username_pw_set("try", "try")
-
-# client.connect("public.cloud.shiftr.io", 1883, 60)
+# Server y port MQTT 
 client.connect("192.168.0.17", 1883)
-
-# Si quiero que esté escuchando para siempre:
-# client.loop_forever()
-# http://www.steves-internet-guide.com/loop-python-mqtt-client/
-
-# Inicia una nueva hebra
+# Start new thread
 client.loop_start()
-time.sleep(4)
 
+# Create web socket server
+server = WebsocketServer(9001)
+server.set_fn_new_client(new_client)
+server.set_fn_message_received(new_message)
+
+# Start new thread
+threading.Thread(target = server.run_forever).start()
+
+# Loop
 while 1:
-    # Publish a message every second
-    #client.publish("SPEA", "Hello World", 1)
-    time.sleep(1)
 
-'''
-# Generate DH parameters
-parameters = dh.generate_parameters(generator=2, key_size=512, backend=default_backend())
-params_pem = parameters.parameter_bytes(Encoding.PEM, ParameterFormat.PKCS3)
-print(params_pem)
-'''
+    # Key rotation
+    time.sleep(300)
 
-#b_params_from_number = DHParameterNumbers(10, 3).parameters(backend=default_backend())
-#b_params_from_pem = load_pem_parameters(b_pem, backend=default_backend())
+    # Generate DH parameters
+    parameters = dh.generate_parameters(generator = 2, key_size = 512, backend = default_backend())
+    params_pem = parameters.parameter_bytes(Encoding.PEM, ParameterFormat.PKCS3)
+    print(params_pem.decode())
 
-#b_params_pem= b_params.parameter(backend=default_backend())
+    # Generate private and public key
+    a_private_key = parameters.generate_private_key()
+    a_public_key = a_private_key.public_key()
+    print("Esta es mi clave privada: %d" %a_private_key.private_numbers().x)
+    print("Esta es mi clave pública: %d" %a_public_key.public_numbers().y)
 
-#parameters = b_params_from_number
+    # Generate private and public key ECDH
+    a_private_key_ecdh = ec.generate_private_key(ec.SECP384R1())
+    a_public_key_ecdh = a_private_key_ecdh.public_key()
 
-#Generate private keys.
-a_private_key = parameters.generate_private_key()
-a_public_key = a_private_key.public_key()
-
-print("Esta es mi clave privada: %d"%a_private_key.private_numbers().x)
-print("Esta es mi clave pública: %d"%a_public_key.public_numbers().y)
-
-'''
-b_private_key = parameters.generate_private_key()
-b_public_key = b_private_key.public_key()
-'''
-
-print("Dame la pública de tu compañero: ")
-b_public_key_number = int(input())
-
-#Des-serializando
-peer_public_numbers = dh.DHPublicNumbers(b_public_key_number, parameters.parameter_numbers())
-b_public_key = peer_public_numbers.public_key(default_backend())
-
-'''
-print("Esta es tu clave privada: %d"%b_private_key.private_numbers().x)
-print("Esta es tu clave pública: %d"%b_public_key.public_numbers().y)
-'''
-a_shared_key = a_private_key.exchange(b_public_key)
-#b_shared_key = b_private_key.exchange(a_public_key)
-
-print("a_shared_key: " + str(a_shared_key.hex()))
-#print("b_shared_key: " + str(b_shared_key))
-
-derived_key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b'handshake data').derive(a_shared_key)
-key = base64.urlsafe_b64encode(derived_key)
-print(key)
-
-#Para CBC
-iv = os.urandom(16)
-mode_CBC = modes.CBC(iv)
-
-def ejercicio1():
-  return 0
-
-backend = default_backend()
-
-ejercicio1()
-
-'''
-# Para realiza el Padding de bloques de 128 bits (AES) habría que usar un padder
-padder = padding.PKCS7(128).padder()
-
-# Genera una clave aleatoria
-key = os.urandom(16)
-# msg = os.urandom(64)
-msg = b"Hello world"
-
-# Crea un objeto de cifrado usando el algoritmo y modo indicado y lo inicializa con la clave key
-cipher_ecb = Cipher(algorithms.AES(key), modes.ECB(), backend=backend)
-
-# Crea un cifrador, también se podría haber creado un descifrador
-encryptor_ecb = cipher_ecb.encryptor()
-
-# Si queremos padding antes habría que usar el padder
-p = padder.update(msg)
-p += padder.finalize() 
-
-# msj tiene longitud multiplo de 128 bits
-cifrado = encryptor_ecb.update(p)
-
-#Como no hay padding, finaliza no devuelve nada adicional
-# encryptor_ecb.finalize()
-
-print(p)
-print(cifrado.hex())
-
-decryptor_ecb = cipher_ecb.decryptor()
-descifrado = decryptor_ecb.update(cifrado)
-decryptor_ecb.finalize()
-print(descifrado)
-
-unpadder = padding.PKCS7(128).unpadder()
-output = unpadder.update(descifrado) + unpadder.finalize()
-print(output)
-'''
-
-## FERNET
-# key is generated 
-# key = Fernet.generate_key()
-  
-# value of key is assigned to a variable 
-f = Fernet(key) 
-
-# the plaintext is converted to ciphertext 
-cifrado = f.encrypt(b"Hello world") 
-
-# display the ciphertext 
-print(cifrado) 
-
-# decrypting the ciphertext 
-descifrado = f.decrypt(cifrado) 
-  
-# display the plaintext and the decode() method  
-# converts it from byte to string 
-print(descifrado.decode())
-
-### PRUEBA
-derived_key2 = HKDF(algorithm=hashes.SHA256(), length=24, salt=None, info=b'handshake data').derive(a_shared_key)
-key2 = base64.urlsafe_b64encode(derived_key2)
-print(key2)
-
-## AEAD
-# key = aead.AESGCM.generate_key(bit_length=128)
-aesgcm = aead.AESGCM(key2)
-nonce = os.urandom(12)
-# aad = b"Authenticated but unencrypted data"
-cifrado = aesgcm.encrypt(nonce, b"Hello world", None)
-descifrado = aesgcm.decrypt(nonce, cifrado, None)
-print(descifrado.decode())
-
-# 1. Iot -> S : publish "register" Pu_IoT_DH
-# 2. S -> FF :  publish "pu_S" Pu_S_DH 
-# 3. S, IoT : Generate K_s
-# 4. IoT: Generate Code = Random (6 digitos)
-# 5. IoT: Show Code
-# 6. IoT - S : publish "auth" E_K_S(Code)
-# 7. S : Verify Code received = Code shown
-
-# También se puede conectar y enviar en una linea https://www.eclipse.org/paho/clients/python/docs/#single
-
-# Y conectar y bloquear para leer una sola vez en una sola linea https://www.eclipse.org/paho/clients/python/docs/#simple
+    # Send to devices new key
+    for x in names:
+        # DH or ECDH
+        if (asymmetric_modes[names.index(x)] == 0):
+            client.publish(name + "/to", "param:" + str(params_pem, 'ascii'))
+            client.publish(name + "/to", "public:" + str(a_public_key.public_numbers().y))
+        else:
+            client.publish(name + "/to", "public:" + a_public_key_ecdh.public_bytes(encoding = Encoding.PEM, format = PublicFormat.SubjectPublicKeyInfo).decode())
