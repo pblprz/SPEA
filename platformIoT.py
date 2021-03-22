@@ -47,16 +47,22 @@ def new_message(client2, server, message):
     # HMAC message
     else:
         hmac_key = str(message)
-        h2 = hmac.new(bytes(hmac_key, 'ascii'), bytes(str(b_public_key.public_numbers().y), 'ascii'), hashlib.sha256)
+
+        # DH o ECDH
+        if (asymmetric_mode == 0):
+            h2 = hmac.new(bytes(hmac_key, 'ascii'), bytes(str(b_public_key.public_numbers().y), 'ascii'), hashlib.sha256)
+        else:
+            h2 = hmac.new(bytes(hmac_key, 'ascii'), b_public_key_ecdh.public_bytes(encoding = Encoding.PEM, format = PublicFormat.SubjectPublicKeyInfo), hashlib.sha256)
+
         # Compare HMAC
         if (hmac.compare_digest(h, h2.hexdigest())):
             hmacs.append(True)
             data = { "type": "datos_dispositivos", "name": name, "mode": mode } # model data
             server.send_message_to_all(json.dumps(data))
-            print("HMAC de " + name + " coincide.")
+            print("HMAC de " + name + " coincide. Añadiendo dispositivo...")
         else:
             hmacs.append(False)
-            print("HMAC de " + name + " no coincide.")
+            print("HMAC de " + name + " no coincide. Dispositivo expulsado.")
 
 # Generate DH parameters
 parameters = dh.generate_parameters(generator = 2, key_size = 512, backend = default_backend())
@@ -192,11 +198,11 @@ def on_message(client, userdata, msg):
             elif (str(msg.payload.decode()).split(":")[0] == "hmac"):
 
                 # Save received HMAC
+                print("HMAC recibida del dispositivo.")
                 h = str(msg.payload.decode()).split(":")[1]
 
                 # If the device has just 'input'
                 if (int(mode) == 0):
-
                     # DH or ECDH
                     if (asymmetric_mode == 0):
                         h2 = hmac.new(bytes(hmac_key, 'ascii'), bytes(str(b_public_key.public_numbers().y), 'ascii'), hashlib.sha256)
