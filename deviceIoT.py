@@ -72,6 +72,10 @@ def on_message(client, userdata, msg):
 
             # ECDH
             else:
+                # Generate private and public key ECDH
+                a_private_key_ecdh = ec.generate_private_key(ec.SECP384R1())
+                a_public_key_ecdh = a_private_key_ecdh.public_key()
+
                 b_public_key_number = str(msg.payload.decode()).split(":")[1]
                 b_public_key = load_pem_public_key(b_public_key_number.encode())
                 client.publish(name + "/from", "public:" + a_public_key_ecdh.public_bytes(encoding = Encoding.PEM, format = PublicFormat.SubjectPublicKeyInfo).decode())
