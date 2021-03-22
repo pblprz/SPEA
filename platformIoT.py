@@ -231,7 +231,7 @@ def on_message(client, userdata, msg):
                     message = fernet_keys[names.index(name)].decrypt(message.encode())
                 else:
                     message = aead_keys[names.index(name)].decrypt(b"12345678", message.encode('latin-1'), None)
-                print("Message from " + name + ":" + message.decode())
+                print("Message from " + name + ": " + message.decode())
 
                 # Show the correspondent information on web page
                 data = { "type": "message", "name": name, "payload": message.decode() } # model data
