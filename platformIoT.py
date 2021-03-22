@@ -73,7 +73,7 @@ a_public_key_ecdh = a_private_key_ecdh.public_key()
 # The callback for when the client receives a CONNACK response from the server
 def on_connect(client, userdata, flags, rc):
     if (rc == 0):
-        print("Connected OK")
+        print("Connected OK (MQTT)")
         client.subscribe("connection")
     else:
         print("Connected with result code " + str(rc))
@@ -95,6 +95,7 @@ def on_message(client, userdata, msg):
 
     # Connection message
     if (msg.topic == "connection"):
+        print("Connection message.")
 
         # Initialize some variables
         name = str(msg.payload.decode()).split(":")[0]
@@ -115,6 +116,7 @@ def on_message(client, userdata, msg):
         else:
             client.publish(name + "/to", "public:" + a_public_key_ecdh.public_bytes(encoding = Encoding.PEM, format = PublicFormat.SubjectPublicKeyInfo).decode())
         client.subscribe(name + "/from")
+        print("Public key sent to device.")
 
         # Show the information on web page
         data = { "type": "conexion_dispositivo", "payload": msg.payload.decode() }
@@ -136,11 +138,11 @@ def on_message(client, userdata, msg):
                     shared_keys.pop(names.index(name))
                     fernet_keys.pop(names.index(name))
                     aead_keys.pop(names.index(name))
-                    print("Public key uploaded")
+                    print("Public key uploaded from device.")
 
                 # If we don't know its public key, we save it
                 except IndexError:
-                    print("New public key")
+                    print("New public key from device.")
 
                 # DH key exchange
                 if (asymmetric_modes[names.index(name)] == 0):
@@ -156,6 +158,7 @@ def on_message(client, userdata, msg):
                     b_public_key_ecdh = load_pem_public_key(b_public_key_number.encode())
                     a_shared_key = a_private_key_ecdh.exchange(ec.ECDH(), b_public_key_ecdh)
 
+                print("Shared key calculated.")
                 # Save the shared key
                 shared_keys.insert(names.index(name), a_shared_key)
 
@@ -206,12 +209,12 @@ def on_message(client, userdata, msg):
                         data = { "type": "datos_dispositivos", "name": name, "mode": mode }
                         # Device will be added on web page if HMAC is correct
                         server.send_message_to_all(json.dumps(data))
-                        print("HMAC de " + name + " coincide.")
+                        print("HMAC de " + name + " coincide. Añadiendo dispositivo...")
                     else:
                         hmacs.append(False)
                         # Unsubscribe
                         client.unsubscribe(name + "/from")
-                        print("HMAC de " + name + " no coincide.")
+                        print("HMAC de " + name + " no coincide. Dispositivo expulsado.")
 
             # Receive message from device
             elif (str(msg.payload.decode()).split(": ")[0] == "message"):
@@ -222,7 +225,7 @@ def on_message(client, userdata, msg):
                     message = fernet_keys[names.index(name)].decrypt(message.encode())
                 else:
                     message = aead_keys[names.index(name)].decrypt(b"12345678", message.encode('latin-1'), None)
-                print(message.decode())
+                print("Message from " + name + ":" + message.decode())
 
                 # Show the correspondent information on web page
                 data = { "type": "message", "name": name, "payload": message.decode() } # model data
@@ -253,17 +256,15 @@ while 1:
 
     # Key rotation
     time.sleep(300)
+    print("Updating keys...")
 
     # Generate DH parameters
     parameters = dh.generate_parameters(generator = 2, key_size = 512, backend = default_backend())
     params_pem = parameters.parameter_bytes(Encoding.PEM, ParameterFormat.PKCS3)
-    print(params_pem.decode())
 
     # Generate private and public key
     a_private_key = parameters.generate_private_key()
     a_public_key = a_private_key.public_key()
-    print("Esta es mi clave privada: %d" %a_private_key.private_numbers().x)
-    print("Esta es mi clave pública: %d" %a_public_key.public_numbers().y)
 
     # Generate private and public key ECDH
     a_private_key_ecdh = ec.generate_private_key(ec.SECP384R1())
@@ -277,3 +278,5 @@ while 1:
             client.publish(name + "/to", "public:" + str(a_public_key.public_numbers().y))
         else:
             client.publish(name + "/to", "public:" + a_public_key_ecdh.public_bytes(encoding = Encoding.PEM, format = PublicFormat.SubjectPublicKeyInfo).decode())
+
+    print("New keys send.")

@@ -20,7 +20,7 @@ import threading
 
 # Change for each device
 mode = 0            # 0 = E, 1 = S, 2 = E/S, 3 = None
-name = "Prueba"     # Device name
+name = "Pablo"      # Device name
 
 # The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, flags, rc):
@@ -56,11 +56,11 @@ def on_message(client, userdata, msg):
             # Calculate keys from params
             a_private_key = parameters.generate_private_key()
             a_public_key = a_private_key.public_key()
-            #print("Parámetros: " + b_pem)
             client.publish(name + "/from", "public:" + str(a_public_key.public_numbers().y))
 
         # Receive public key
         elif (str(msg.payload.decode()).split(":")[0] == "public"):
+            print("Public key received from platform.")
             
             # DH
             if (asymmetric_mode == 0):
@@ -81,6 +81,8 @@ def on_message(client, userdata, msg):
                 client.publish(name + "/from", "public:" + a_public_key_ecdh.public_bytes(encoding = Encoding.PEM, format = PublicFormat.SubjectPublicKeyInfo).decode())
                 # Calculate shared key
                 a_shared_key = a_private_key_ecdh.exchange(ec.ECDH(), b_public_key)
+
+            print("Shared key calculated.")
 
             # Calculate HMAC
             def hebra():
@@ -148,4 +150,4 @@ while 1:
     else:
         cifrado = a_key.encrypt(b"12345678", b"Hello world", None)
         client.publish(name + "/from", "message: " + cifrado.decode('latin-1'))
-    print(cifrado)
+    print("Message sent")
